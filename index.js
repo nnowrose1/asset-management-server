@@ -7,12 +7,9 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const app = express();
 const port = process.env.PORT || 3000;
 
-// tXP4Di7Wuig1ZKXy    asset_management_user
 // middlewares
 app.use(cors());
 app.use(express.json());
-
-
 
 const uri = `mongodb+srv://${process.env.db_username}:${process.env.db_password}@cluster0.fawnknm.mongodb.net/?appName=Cluster0`;
 
@@ -22,7 +19,7 @@ const client = new MongoClient(uri, {
     version: ServerApiVersion.v1,
     strict: true,
     deprecationErrors: true,
-  }
+  },
 });
 
 async function run() {
@@ -30,28 +27,37 @@ async function run() {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
 
+    const db = client.db("asset-management-db");
+    const usersCollection= db.collection("users");
 
+    // users related APIs here
+    // posting a user to DB
+    app.post('/users', async(req, res) => {
+      const user = req.body;
+      user.createdAt = new Date();
+      const result = await usersCollection.insertOne(user);
+      res.send(result);
+    })
 
-
-
-
-
-
-
-
-
-
+    // getting the role of a user: Hr or Employee
+    app.get("/users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      const query = { email: email };
+      const user = await usersCollection.findOne(query);
+      res.send({ role: user?.role});
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!"
+    );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
   }
 }
 run().catch(console.dir);
-
 
 app.get("/", (req, res) => {
   res.send("Asset Management server!");
