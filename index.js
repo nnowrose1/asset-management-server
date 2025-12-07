@@ -22,6 +22,8 @@ const client = new MongoClient(uri, {
   },
 });
 
+
+
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
@@ -29,6 +31,7 @@ async function run() {
 
     const db = client.db("asset-management-db");
     const usersCollection= db.collection("users");
+    const packageCollection = db.collection("packages");
 
     // users related APIs here
     // posting a user to DB
@@ -44,8 +47,14 @@ async function run() {
       const email = req.params.email;
       const query = { email: email };
       const user = await usersCollection.findOne(query);
-      res.send({ role: user?.role});
+      res.send(user?.role);
     });
+
+    // getting the packages form DB
+    app.get('/packages', async(req, res) => {
+      const result = await packageCollection.find().toArray();
+      res.send(result);
+    })
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
