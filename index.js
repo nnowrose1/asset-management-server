@@ -32,6 +32,7 @@ async function run() {
     const db = client.db("asset-management-db");
     const usersCollection= db.collection("users");
     const packageCollection = db.collection("packages");
+    const assetCollection = db.collection("assets");
 
     // users related APIs here
     // posting a user to DB
@@ -39,6 +40,14 @@ async function run() {
       const user = req.body;
       user.createdAt = new Date();
       const result = await usersCollection.insertOne(user);
+      res.send(result);
+    })
+
+// getting a particular user from DB
+     app.get('/users/:email', async(req, res) => {
+      const email = req.params.email;
+      const query = {email: email};
+      const result = await usersCollection.findOne(query);
       res.send(result);
     })
 
@@ -53,6 +62,15 @@ async function run() {
     // getting the packages form DB
     app.get('/packages', async(req, res) => {
       const result = await packageCollection.find().toArray();
+      res.send(result);
+    })
+
+
+    // assets related APIs here
+    // posting an asset to DB
+    app.post('/assets', async(req, res) => {
+      const asset = req.body;
+      const result = await assetCollection.insertOne(asset);
       res.send(result);
     })
 
