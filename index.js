@@ -22,34 +22,34 @@ const client = new MongoClient(uri, {
   },
 });
 
-
-
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
 
     const db = client.db("asset-management-db");
-    const usersCollection= db.collection("users");
+    const usersCollection = db.collection("users");
     const packageCollection = db.collection("packages");
     const assetCollection = db.collection("assets");
+    const requestCollection = db.collection("requests");
+    const employeeAffiliations = db.collection("company");
 
     // users related APIs here
     // posting a user to DB
-    app.post('/users', async(req, res) => {
+    app.post("/users", async (req, res) => {
       const user = req.body;
       user.createdAt = new Date();
       const result = await usersCollection.insertOne(user);
       res.send(result);
-    })
+    });
 
-// getting a particular user from DB
-     app.get('/users/:email', async(req, res) => {
+    // getting a particular user from DB
+    app.get("/users/:email", async (req, res) => {
       const email = req.params.email;
-      const query = {email: email};
+      const query = { email: email };
       const result = await usersCollection.findOne(query);
       res.send(result);
-    })
+    });
 
     // getting the role of a user: Hr or Employee
     app.get("/users/:email/role", async (req, res) => {
@@ -60,19 +60,110 @@ async function run() {
     });
 
     // getting the packages form DB
-    app.get('/packages', async(req, res) => {
+    app.get("/packages", async (req, res) => {
       const result = await packageCollection.find().toArray();
       res.send(result);
-    })
-
+    });
 
     // assets related APIs here
     // posting an asset to DB
-    app.post('/assets', async(req, res) => {
+    app.post("/assets", async (req, res) => {
       const asset = req.body;
       const result = await assetCollection.insertOne(asset);
       res.send(result);
-    })
+    });
+
+    // getting assets from DB
+    app.get("/assets", async (req, res) => {
+      const email = req.query.email;
+      const query = {};
+      if (email) {
+        query.hrEmail = email;
+      }
+      const result = await assetCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    // updating an asset:
+
+    // request related APIs here
+    // posting a request to DB
+    app.post("/requests", async (req, res) => {
+      const request = req.body;
+      const result = await requestCollection.insertOne(request);
+      res.send(result);
+    });
+
+    // getting the requests for a particular hr
+    app.get("/requests", async (req, res) => {
+      const email = req.query.email;
+      const query = { hrEmail: email };
+      const result = await requestCollection.find(query).toArray();
+      res.send(result);
+    });
+
+    // update the status of request
+    app.patch("/requests/:id", async (req, res) => {
+      const id = req.params.id;
+      const updatedStatus = req.body;
+      let insertEmployeeAffiliation = null;
+      const statusQuery = { _id: new ObjectId(id) };
+      // if rejected
+      if (updatedStatus.status === "rejected") {
+        const update = {
+          $set: {
+            requestStatus: updatedStatus.status,
+          },
+        };
+        const statusUpdateResult = await requestCollection.updateOne(statusQuery, update);
+        return res.send(statusUpdateResult);
+      }
+
+      // if approved
+      // decrease asset's available quantity by 1
+      const assetQuery = { _id: new ObjectId(updatedStatus.assetId) };
+      const asset = await assetCollection.findOne(assetQuery);
+       if (asset.availableQuantity <= 0) {
+      return res.send({
+        success: false,
+        message: "No available quantity left",
+      });
+    }
+    
+        const decreaseAssetQuantity = {
+        $inc: {
+          availableQuantity: -1,
+        },
+      };
+
+      const assetUpdateResult = await assetCollection.updateOne(assetQuery, decreaseAssetQuantity);
+
+           const update = {
+          $set: {
+            requestStatus: updatedStatus.status,
+            processedBy: updatedStatus.processedBy,
+            approvalDate: updatedStatus.date,
+          },
+        };
+        const statusUpdateResult = await requestCollection.updateOne(statusQuery, update);
+      
+
+      // create employee's company affiliation
+      if (updatedStatus.companyAffiliation) {
+        const companyQuery = { employeeEmail: updatedStatus.companyAffiliation.employeeEmail };
+        const employeeAlreadyAffiliated = await employeeAffiliations.findOne(
+          companyQuery
+        );
+      
+      if (!employeeAlreadyAffiliated) {
+         insertEmployeeAffiliation = await employeeAffiliations.insertOne(
+          updatedStatus.companyAffiliation
+        );
+      }
+      }
+      res.send({ statusUpdateResult, assetUpdateResult, insertEmployeeAffiliation });
+    });
+
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
