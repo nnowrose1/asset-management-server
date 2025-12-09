@@ -60,6 +60,25 @@ async function run() {
       res.send(user?.role);
     });
 
+    // updating an employee info
+    app.patch('/users/:id', async(req, res) => {
+      const id = req.params.id;
+      const query = {_id: new ObjectId(id)};
+      const updatedInfo = req.body;
+      updatedInfo.updatedAt = new Date();
+
+      const update = {
+        $set: {
+          name: updatedInfo.name,
+          photoURL: updatedInfo.photoURL,
+          dateOfBirth: updatedInfo.dateOfBirth,
+          updatedAt: updatedInfo.updatedAt
+        }
+      }
+      const result = await usersCollection.updateOne(query, update);
+      res.send(result);
+    })
+
     // getting the packages form DB
     app.get("/packages", async (req, res) => {
       const result = await packageCollection.find().toArray();
@@ -217,10 +236,31 @@ async function run() {
     // getting all the employees associated with a company
     app.get("/employees", async (req, res) => {
       const email = req.query.email;
-      const query = {hrEmail: email}
+      const companyName = req.query.companyName;
+      const query = {};
+      if(email) {
+         query.hrEmail=email;
+      }
+      if(companyName){
+        query.companyName=companyName
+      }
+      // const query = {hrEmail: email}
       const result = await employeeAffiliations.find(query).toArray();
       res.send(result);
     });
+
+    // getting all the companies an employee is associated with
+    app.get('/companies', async(req, res) => {
+      const email = req.query.email;
+      const query = {};
+      if(email) {
+        query.employeeEmail = email;
+      }
+      const companyAffiliations = await employeeAffiliations.find(query).toArray();
+      const companies = [...new Set(companyAffiliations.map(a => a.companyName))];
+      res.send(companies);
+
+    })
 
     // deleting an employee from company
     app.delete('/employees', async(req, res) => {
