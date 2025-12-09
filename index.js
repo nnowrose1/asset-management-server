@@ -33,6 +33,7 @@ async function run() {
     const assetCollection = db.collection("assets");
     const requestCollection = db.collection("requests");
     const employeeAffiliations = db.collection("company");
+    const assignedAssetsCollection = db.collection("assignedAssets");
 
     // users related APIs here
     // posting a user to DB
@@ -83,6 +84,20 @@ async function run() {
       const result = await assetCollection.find(query).toArray();
       res.send(result);
     });
+
+    // updating the available quantity of an asset
+    app.patch('/assets/:id', async(req, res) => {
+      const id= req.params.id;
+      const updatedQuantity = req.body;
+      const query = {_id: new ObjectId(id)};
+    const update = {
+      $set: {
+        availableQuantity: updatedQuantity.availableQuantity
+      }
+    }
+    const result = await assetCollection.updateOne(query, update);
+    res.send(result);
+    })
 
     
 
@@ -218,6 +233,13 @@ async function run() {
       const result =await employeeAffiliations.deleteOne(query);
       res.send(result);
 
+    })
+
+    // posting assignedAssets to DB
+    app.post('/assignedAssets', async(req, res) => {
+      const assignedAsset = req.body;
+      const result = await assignedAssetsCollection.insertOne(assignedAsset);
+      res.send(result);
     })
 
     // Send a ping to confirm a successful connection
