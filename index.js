@@ -111,9 +111,12 @@ async function run() {
 
      // getting total asset count for a particular employee for a hr for myEmployees page
     app.get('/requests', async(req, res) => {
-       console.log("received Query", req.query);
-      const { hrEmail, requestStatus} = req.query;   
+      //  console.log("received Query", req.query);
+      const {requesterEmail, hrEmail, requestStatus} = req.query;   
       const query = {};
+      if(requesterEmail){
+        query.requesterEmail = requesterEmail
+      }
       if(hrEmail) {
         query.hrEmail = hrEmail
       }
@@ -241,6 +244,14 @@ async function run() {
       const result = await assignedAssetsCollection.insertOne(assignedAsset);
       res.send(result);
     })
+
+    // getting assignedAssets from DB
+    app.get('/assignedAssets', async(req, res) => {
+      const email = req.query.email;
+      const query = {employeeEmail: email}
+      const result = await assignedAssetsCollection.find(query).toArray();
+      res.send(result);
+  })
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
