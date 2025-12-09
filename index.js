@@ -84,7 +84,7 @@ async function run() {
       res.send(result);
     });
 
-    // updating an asset:
+    
 
     // request related APIs here
     // posting a request to DB
@@ -94,9 +94,24 @@ async function run() {
       res.send(result);
     });
 
+     // getting total asset count for a particular employee for a hr for myEmployees page
+    app.get('/requests', async(req, res) => {
+       console.log("received Query", req.query);
+      const { hrEmail, requestStatus} = req.query;   
+      const query = {};
+      if(hrEmail) {
+        query.hrEmail = hrEmail
+      }
+      if(requestStatus) {
+        query.requestStatus = requestStatus
+      }
+      const result = await requestCollection.find(query).toArray();
+      res.send(result);
+    })
+
     // getting the requests for a particular hr
-    app.get("/requests", async (req, res) => {
-      const email = req.query.email;
+    app.get("/requests/:email", async (req, res) => {
+      const email = req.params.email;
       const query = { hrEmail: email };
       const result = await requestCollection.find(query).toArray();
       res.send(result);
@@ -115,7 +130,10 @@ async function run() {
             requestStatus: updatedStatus.status,
           },
         };
-        const statusUpdateResult = await requestCollection.updateOne(statusQuery, update);
+        const statusUpdateResult = await requestCollection.updateOne(
+          statusQuery,
+          update
+        );
         return res.send(statusUpdateResult);
       }
 
@@ -123,47 +141,84 @@ async function run() {
       // decrease asset's available quantity by 1
       const assetQuery = { _id: new ObjectId(updatedStatus.assetId) };
       const asset = await assetCollection.findOne(assetQuery);
-       if (asset.availableQuantity <= 0) {
-      return res.send({
-        success: false,
-        message: "No available quantity left",
-      });
-    }
-    
-        const decreaseAssetQuantity = {
+      if (asset.availableQuantity <= 0) {
+        return res.send({
+          success: false,
+          message: "No available quantity left",
+        });
+      }
+
+      const decreaseAssetQuantity = {
         $inc: {
           availableQuantity: -1,
         },
       };
 
-      const assetUpdateResult = await assetCollection.updateOne(assetQuery, decreaseAssetQuantity);
+      const assetUpdateResult = await assetCollection.updateOne(
+        assetQuery,
+        decreaseAssetQuantity
+      );
 
-           const update = {
-          $set: {
-            requestStatus: updatedStatus.status,
-            processedBy: updatedStatus.processedBy,
-            approvalDate: updatedStatus.date,
-          },
-        };
-        const statusUpdateResult = await requestCollection.updateOne(statusQuery, update);
-      
+      const update = {
+        $set: {
+          requestStatus: updatedStatus.status,
+          processedBy: updatedStatus.processedBy,
+          approvalDate: updatedStatus.date,
+        },
+      };
+      const statusUpdateResult = await requestCollection.updateOne(
+        statusQuery,
+        update
+      );
 
       // create employee's company affiliation
       if (updatedStatus.companyAffiliation) {
-        const companyQuery = { employeeEmail: updatedStatus.companyAffiliation.employeeEmail };
+        const companyQuery = {
+          employeeEmail: updatedStatus.companyAffiliation.employeeEmail,
+          hrEmail: updatedStatus.companyAffiliation.hrEmail,
+        };
         const employeeAlreadyAffiliated = await employeeAffiliations.findOne(
           companyQuery
         );
-      
-      if (!employeeAlreadyAffiliated) {
-         insertEmployeeAffiliation = await employeeAffiliations.insertOne(
-          updatedStatus.companyAffiliation
-        );
+
+        if (!employeeAlreadyAffiliated) {
+          insertEmployeeAffiliation = await employeeAffiliations.insertOne(
+            updatedStatus.companyAffiliation
+          );
+        }
       }
-      }
-      res.send({ statusUpdateResult, assetUpdateResult, insertEmployeeAffiliation });
+      res.send({
+        statusUpdateResult,
+        assetUpdateResult,
+        insertEmployeeAffiliation,
+      });
     });
 
+   
+
+    // getting all the employees associated with a company
+    app.get("/employees", async (req, res) => {
+      const email = req.query.email;
+      const query = {hrEmail: email}
+      const result = await employeeAffiliations.find(query).toArray();
+      res.send(result);
+    });
+
+    // deleting an employee from company
+    app.delete('/employees', async(req, res) => {
+      const {hrEmail, employeeEmail} = req.query;
+      const query = {};
+      if(hrEmail){
+        query.hrEmail = hrEmail
+      }
+      if(employeeEmail){
+        query.employeeEmail=employeeEmail
+      }
+     
+      const result =await employeeAffiliations.deleteOne(query);
+      res.send(result);
+
+    })
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
