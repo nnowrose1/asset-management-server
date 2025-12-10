@@ -1,6 +1,8 @@
+require("dotenv").config();
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
 const express = require("express");
 const cors = require("cors");
-require("dotenv").config();
+
 // var admin = require("firebase-admin");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
@@ -12,6 +14,14 @@ app.use(cors());
 app.use(express.json());
 
 const uri = `mongodb+srv://${process.env.db_username}:${process.env.db_password}@cluster0.fawnknm.mongodb.net/?appName=Cluster0`;
+
+// function to generate trackingID
+function generateTrackingId() {
+  const prefix = "asset"; // change to your brand name if needed
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, ""); // YYYYMMDD
+  const random = Math.random().toString(36).substring(2, 10).toUpperCase(); // 8 chars
+  return `${prefix}-${date}-${random}`;
+}
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -34,6 +44,17 @@ async function run() {
     const requestCollection = db.collection("requests");
     const employeeAffiliations = db.collection("company");
     const assignedAssetsCollection = db.collection("assignedAssets");
+
+    // middleware with database access to verify hr before allowing hr activity. Must be used after verifyJWTToken middleware
+    const verifyHR = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email: email };
+      const user = await usersCollection.findOne(query);
+      if (!user || user.role !== "hr") {
+        return res.status(403).send({ message: "Forbidden Access" });
+      }
+      next();
+    };
 
     // users related APIs here
     // posting a user to DB
@@ -61,27 +82,46 @@ async function run() {
     });
 
     // updating an employee info
-    app.patch('/users/:id', async(req, res) => {
+    app.patch("/users/:id", async (req, res) => {
       const id = req.params.id;
-      const query = {_id: new ObjectId(id)};
+      const query = { _id: new ObjectId(id) };
       const updatedInfo = req.body;
-      updatedInfo.updatedAt = new Date();
+
+      const updatedFields = {
+        updatedAt: new Date(),
+      };
+
+      if (updatedInfo.name) {
+        updatedFields.name = updatedInfo.name;
+      }
+      if (updatedInfo.photoURL) {
+        updatedFields.photoURL = updatedInfo.photoURL;
+      }
+      if (updatedInfo.companyLogo) {
+        updatedFields.companyLogo = updatedInfo.companyLogo;
+      }
+      if (updatedInfo.dateOfBirth) {
+        updatedFields.dateOfBirth = updatedInfo.dateOfBirth;
+      }
 
       const update = {
-        $set: {
-          name: updatedInfo.name,
-          photoURL: updatedInfo.photoURL,
-          dateOfBirth: updatedInfo.dateOfBirth,
-          updatedAt: updatedInfo.updatedAt
-        }
-      }
+        $set: updatedFields,
+      };
       const result = await usersCollection.updateOne(query, update);
       res.send(result);
-    })
+    });
 
     // getting the packages form DB
     app.get("/packages", async (req, res) => {
       const result = await packageCollection.find().toArray();
+      res.send(result);
+    });
+
+    // getting a particular package
+    app.get("/packages/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await packageCollection.findOne(query);
       res.send(result);
     });
 
@@ -104,21 +144,35 @@ async function run() {
       res.send(result);
     });
 
-    // updating the available quantity of an asset
-    app.patch('/assets/:id', async(req, res) => {
-      const id= req.params.id;
-      const updatedQuantity = req.body;
-      const query = {_id: new ObjectId(id)};
-    const update = {
-      $set: {
-        availableQuantity: updatedQuantity.availableQuantity
-      }
-    }
-    const result = await assetCollection.updateOne(query, update);
-    res.send(result);
-    })
+    // getting a particular asset from DB
+    app.get("/assets/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await assetCollection.findOne(query);
+      res.send(result);
+    });
 
-    
+    // updating the available quantity of an asset
+    app.patch("/assets/:id", async (req, res) => {
+      const id = req.params.id;
+      const updated = req.body;
+      const query = { _id: new ObjectId(id) };
+      const update = {
+        $set: {
+          availableQuantity: updated.availableQuantity,
+        },
+      };
+      const result = await assetCollection.updateOne(query, update);
+      res.send(result);
+    });
+
+    // deleting an asset
+    app.delete("/assets/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await assetCollection.deleteOne(query);
+      res.send(result);
+    });
 
     // request related APIs here
     // posting a request to DB
@@ -128,23 +182,23 @@ async function run() {
       res.send(result);
     });
 
-     // getting total asset count for a particular employee for a hr for myEmployees page
-    app.get('/requests', async(req, res) => {
+    // getting total asset count for a particular employee for a hr for myEmployees page
+    app.get("/requests", async (req, res) => {
       //  console.log("received Query", req.query);
-      const {requesterEmail, hrEmail, requestStatus} = req.query;   
+      const { requesterEmail, hrEmail, requestStatus } = req.query;
       const query = {};
-      if(requesterEmail){
-        query.requesterEmail = requesterEmail
+      if (requesterEmail) {
+        query.requesterEmail = requesterEmail;
       }
-      if(hrEmail) {
-        query.hrEmail = hrEmail
+      if (hrEmail) {
+        query.hrEmail = hrEmail;
       }
-      if(requestStatus) {
-        query.requestStatus = requestStatus
+      if (requestStatus) {
+        query.requestStatus = requestStatus;
       }
       const result = await requestCollection.find(query).toArray();
       res.send(result);
-    })
+    });
 
     // getting the requests for a particular hr
     app.get("/requests/:email", async (req, res) => {
@@ -190,10 +244,28 @@ async function run() {
           availableQuantity: -1,
         },
       };
-
       const assetUpdateResult = await assetCollection.updateOne(
         assetQuery,
         decreaseAssetQuantity
+      );
+
+      // increase user's currentEmployee's by 1
+      const userQuery = { _id: new ObjectId(updatedStatus.userId) };
+      const user = await usersCollection.findOne(userQuery);
+      if (user.currentEmployees > user.packageLimit) {
+        return res.send({
+          success: false,
+          message: "Package limit exceeded!",
+        });
+      }
+      const currentEmployeeUpdate = {
+        $inc: {
+          currentEmployees: 1,
+        },
+      };
+      const increaseCurrentEmployee = await usersCollection.updateOne(
+        userQuery,
+        currentEmployeeUpdate
       );
 
       const update = {
@@ -227,22 +299,21 @@ async function run() {
       res.send({
         statusUpdateResult,
         assetUpdateResult,
+        increaseCurrentEmployee,
         insertEmployeeAffiliation,
       });
     });
-
-   
 
     // getting all the employees associated with a company
     app.get("/employees", async (req, res) => {
       const email = req.query.email;
       const companyName = req.query.companyName;
       const query = {};
-      if(email) {
-         query.hrEmail=email;
+      if (email) {
+        query.hrEmail = email;
       }
-      if(companyName){
-        query.companyName=companyName
+      if (companyName) {
+        query.companyName = companyName;
       }
       // const query = {hrEmail: email}
       const result = await employeeAffiliations.find(query).toArray();
@@ -250,48 +321,105 @@ async function run() {
     });
 
     // getting all the companies an employee is associated with
-    app.get('/companies', async(req, res) => {
+    app.get("/companies", async (req, res) => {
       const email = req.query.email;
       const query = {};
-      if(email) {
+      if (email) {
         query.employeeEmail = email;
       }
-      const companyAffiliations = await employeeAffiliations.find(query).toArray();
-      const companies = [...new Set(companyAffiliations.map(a => a.companyName))];
+      const companyAffiliations = await employeeAffiliations
+        .find(query)
+        .toArray();
+      const companies = [
+        ...new Set(companyAffiliations.map((a) => a.companyName)),
+      ];
       res.send(companies);
-
-    })
+    });
 
     // deleting an employee from company
-    app.delete('/employees', async(req, res) => {
-      const {hrEmail, employeeEmail} = req.query;
+    app.delete("/employees", async (req, res) => {
+      const { hrEmail, employeeEmail } = req.query;
       const query = {};
-      if(hrEmail){
-        query.hrEmail = hrEmail
+      if (hrEmail) {
+        query.hrEmail = hrEmail;
       }
-      if(employeeEmail){
-        query.employeeEmail=employeeEmail
+      if (employeeEmail) {
+        query.employeeEmail = employeeEmail;
       }
-     
-      const result =await employeeAffiliations.deleteOne(query);
-      res.send(result);
 
-    })
+      const result = await employeeAffiliations.deleteOne(query);
+      res.send(result);
+    });
 
     // posting assignedAssets to DB
-    app.post('/assignedAssets', async(req, res) => {
+    app.post("/assignedAssets", async (req, res) => {
       const assignedAsset = req.body;
       const result = await assignedAssetsCollection.insertOne(assignedAsset);
       res.send(result);
-    })
+    });
 
     // getting assignedAssets from DB
-    app.get('/assignedAssets', async(req, res) => {
+    app.get("/assignedAssets", async (req, res) => {
       const email = req.query.email;
-      const query = {employeeEmail: email}
+      const query = { employeeEmail: email };
       const result = await assignedAssetsCollection.find(query).toArray();
       res.send(result);
-  })
+    });
+
+    //Stripe payment related APIS
+    app.post("/create-checkout-session", async (req, res) => {
+      const paymentInfo = req.body;
+      const amount = parseInt(paymentInfo.cost) * 100;
+      const currentPackageLimit = Number(paymentInfo.currentPackageLimit);
+      const purchasedPackageLimit = Number(paymentInfo.purchasedPackageLimit);
+      const packageLimit = Math.max(currentPackageLimit, purchasedPackageLimit);
+      const session = await stripe.checkout.sessions.create({
+        line_items: [
+          {
+            price_data: {
+              currency: "USD",
+              unit_amount: amount,
+              product_data: {
+                name: paymentInfo.packageName,
+              },
+            },
+            quantity: 1,
+          },
+        ],
+
+        mode: "payment",
+        metadata: {
+          name: paymentInfo.packageName,
+          packageLimit: packageLimit,
+          userId: paymentInfo.userId,
+        },
+        success_url: `${process.env.SITE_DOMAIN}/dashboard/paymentSuccess?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/paymentCancelled`,
+      });
+
+      // console.log(session);
+      res.send({ url: session.url });
+    });
+
+    // verifying the payment
+    app.patch("/verifyPaymentSuccess", async (req, res) => {
+      const sessionId = req.query.session_id;
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      console.log("session retrieve", session);
+      if (session.payment_status === "paid") {
+        const id = session.metadata.userId;
+        const query = { _id: new ObjectId(id) };
+        const update = {
+          $set: {
+            packageLimit: Number(session.metadata.packageLimit),
+            subscription: session.metadata.name
+          },
+        };
+        const result = await usersCollection.updateOne(query, update);
+       return res.send(result);
+      }
+      res.send({ success: true });
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
