@@ -1,5 +1,6 @@
 require("dotenv").config();
 const stripe = require("stripe")(process.env.STRIPE_SECRET);
+const jwt = require('jsonwebtoken');
 const express = require("express");
 const cors = require("cors");
 
@@ -12,6 +13,35 @@ const port = process.env.PORT || 3000;
 // middlewares
 app.use(cors());
 app.use(express.json());
+
+// jwt related APIs here
+ app.post('/getToken', (req, res) => {
+  const user = req.body;
+  const token = jwt.sign(user, process.env.JWT_SECRET , {expiresIn: '1h'});
+      res.send({token: token})
+    })
+
+const verifyJWTToken = (req, res, next) => {
+  console.log(req.headers);
+  const authorization = req.headers.authorization;
+  if(!authorization){
+return res.status(401).send({message:"Unauthorized Access" });
+  }
+  const token = authorization.split(' ')[1];
+  if(!token) {
+return res.status(401).send({message:"Unauthorized Access" });
+  }
+// verify the token
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if(err){
+return res.status(401).send({message:"Unauthorized Access" });
+    }
+    console.log("after decoded", decoded);
+    req.token_email = decoded.email;
+    next();  
+  })
+}
+
 
 const uri = `mongodb+srv://${process.env.db_username}:${process.env.db_password}@cluster0.fawnknm.mongodb.net/?appName=Cluster0`;
 
@@ -44,6 +74,7 @@ async function run() {
     const requestCollection = db.collection("requests");
     const employeeAffiliations = db.collection("company");
     const assignedAssetsCollection = db.collection("assignedAssets");
+    const paymentsCollection = db.collection('payments');
 
     // middleware with database access to verify hr before allowing hr activity. Must be used after verifyJWTToken middleware
     const verifyHR = async (req, res, next) => {
@@ -135,12 +166,12 @@ async function run() {
 
     // getting assets from DB
     app.get("/assets", async (req, res) => {
-      const email = req.query.email;
+      const {email, limit} = req.query;
       const query = {};
       if (email) {
         query.hrEmail = email;
       }
-      const result = await assetCollection.find(query).toArray();
+      const result = await assetCollection.find(query).limit(Number(limit)).toArray();
       res.send(result);
     });
 
@@ -203,9 +234,12 @@ async function run() {
     // getting the requests for a particular hr
     app.get("/requests/:email", async (req, res) => {
       const email = req.params.email;
+      const {limit = 0, page = 1} = req.query;
+      const skip = page - 1;
       const query = { hrEmail: email };
-      const result = await requestCollection.find(query).toArray();
-      res.send(result);
+      const count = await requestCollection.countDocuments(query);
+      const result = await requestCollection.find(query).limit(Number(limit)).skip(Number(skip*limit)).toArray();
+      res.send({result, totalCount: count});
     });
 
     // update the status of request
@@ -386,7 +420,7 @@ async function run() {
             quantity: 1,
           },
         ],
-
+        customer_email: paymentInfo.userEmail,
         mode: "payment",
         metadata: {
           name: paymentInfo.packageName,
@@ -397,7 +431,7 @@ async function run() {
         cancel_url: `${process.env.SITE_DOMAIN}/dashboard/paymentCancelled`,
       });
 
-      // console.log(session);
+       console.log(session);
       res.send({ url: session.url });
     });
 
@@ -406,20 +440,70 @@ async function run() {
       const sessionId = req.query.session_id;
       const session = await stripe.checkout.sessions.retrieve(sessionId);
       console.log("session retrieve", session);
+
+
+       //  check if the transactionId already exists as stripe creates unique transationID
+         const existingPayment = await paymentsCollection.findOne({
+      transactionId: session.payment_intent
+    });
+
+    if (existingPayment) {
+      console.log("Payment already exists, skipping duplicate insert.");
+      return res.send({
+        success: true,
+        message: "Payment already processed.",
+        trackingID: existingPayment.trackingID,
+        transactionId: existingPayment.transactionId,
+      });
+    }
+
+      const trackingID = generateTrackingId();
       if (session.payment_status === "paid") {
         const id = session.metadata.userId;
         const query = { _id: new ObjectId(id) };
         const update = {
           $set: {
             packageLimit: Number(session.metadata.packageLimit),
-            subscription: session.metadata.name
+            subscription: session.metadata.name,
+            trackingID: trackingID,
           },
         };
         const result = await usersCollection.updateOne(query, update);
-       return res.send(result);
-      }
+
+        const paymentHistory = {
+          hrEmail: session.customer_email ,
+          packageName: session.metadata.name,
+          employeeLimit: Number(session.metadata.packageLimit),
+          amount: session.amount_total/100,
+          transactionId: session.payment_intent ,
+          paymentDate: new Date(),
+          status: session.payment_status,
+        };
+
+        const paymentHistoryResult = await paymentsCollection.insertOne(paymentHistory);
+
+       return  res.send({success: true,
+            modifiedUser: result,
+            trackingID: trackingID,
+            transactionId: session.payment_intent,
+            paymentInfo: paymentHistoryResult})
+        }
+
       res.send({ success: true });
     });
+
+     // getting Payment history for a particular user
+    app.get("/paymentHistory", async (req, res) => {
+      const email = req.query.email;
+      const query = {};
+      if (email) {
+        query.hrEmail = email;
+      }
+      const cursor = paymentsCollection.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
