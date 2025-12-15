@@ -172,21 +172,32 @@ async function run() {
       res.send(result);
     });
 
-    // getting returnable and non-returnable assets count
-    app.get("/assets/returnableDistribution", verifyJWTToken, async (req, res) => {
-      const data = await assetCollection.aggregate([
-          { $group: { _id: "$productType", count: { $sum: 1 } } },
-          { $project: { type: "$_id", count: 1, _id: 0 } },
-        ]).toArray();
+    // getting returnable and non-returnable assets count for a hr
+    app.get(
+      "/assets/:email/returnableDistribution",
+      verifyJWTToken,
+      async (req, res) => {
+        const email = req.params.email;
+        if (email !== req.token_email) {
+          return res.status(403).send({ message: "Forbidden Access" });
+        }
+        const data = await assetCollection
+          .aggregate([
+            { $match: { hrEmail: email } },
+            { $group: { _id: "$productType", count: { $sum: 1 } } },
+            { $project: { type: "$_id", count: 1, _id: 0 } },
+          ])
+          .toArray();
 
-      res.send(data);
-    });
+        res.send(data);
+      }
+    );
 
     // getting assets from DB
     app.get("/assets", verifyJWTToken, async (req, res) => {
-      const { email, limit } = req.query;
+      const { email, limit = 0, page = 1 } = req.query;
       // console.log({email: email, tokenEmail: req.token_email});
-
+      const skip = page - 1;
       const query = {};
       if (email) {
         if (email !== req.token_email) {
@@ -195,14 +206,18 @@ async function run() {
 
         query.hrEmail = email;
       }
+      const count = await assetCollection.countDocuments(query);
+      console.log({ email, count });
+
       const result = await assetCollection
         .find(query)
         .sort({
           dateAdded: -1,
         })
         .limit(Number(limit))
+        .skip(Number(skip * limit))
         .toArray();
-      res.send(result);
+      res.send({ result, totalCount: count });
     });
 
     // getting a particular asset from DB
@@ -256,10 +271,15 @@ async function run() {
     });
 
     // request related APIs here
-    // getting top requested 5 assets
-    app.get("/requests/topAssets", async (req, res) => {
+    // getting top requested 5 assets for a hr
+    app.get("/requests/:email/topAssets", async (req, res) => {
+      const email = req.params.email;
+        if (email !== req.token_email) {
+          return res.status(403).send({ message: "Forbidden Access" });
+        }
       const topAssets = await requestCollection
         .aggregate([
+          { $match: { hrEmail: email } },
           { $group: { _id: "$assetName", count: { $sum: 1 } } },
           { $sort: { count: -1 } },
           { $limit: 5 },
@@ -436,6 +456,7 @@ async function run() {
       const email = req.query.email;
 
       const companyName = req.query.companyName;
+
       const query = {};
       if (email) {
         if (email !== req.token_email) {
@@ -446,6 +467,7 @@ async function run() {
       if (companyName) {
         query.companyName = companyName;
       }
+
       // const query = {hrEmail: email}
       const result = await employeeAffiliations.find(query).toArray();
       res.send(result);
