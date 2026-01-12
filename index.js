@@ -86,6 +86,16 @@ async function run() {
       next();
     };
 
+    // Middleware to block demo user from destructive actions
+const blockDemoUser = (req, res, next) => {
+  const demoEmail = "demo@assetnexus.com";
+  if (req.token_email === demoEmail) {
+    return res.status(403).send({ message: "Demo user cannot perform this action" });
+  }
+  next();
+};
+
+
     // users related APIs here
     // posting a user to DB
     app.post("/users", async (req, res) => {
@@ -94,6 +104,11 @@ async function run() {
       const result = await usersCollection.insertOne(user);
       res.send(result);
     });
+    // getting a user from DB
+    app.get('/users', async(req, res) => {
+      const result = await usersCollection.find().toArray();
+      res.send(result);
+    })
 
     // getting a particular user from DB
     app.get("/users/:email", verifyJWTToken, async (req, res) => {
@@ -207,7 +222,7 @@ async function run() {
         query.hrEmail = email;
       }
       const count = await assetCollection.countDocuments(query);
-      console.log({ email, count });
+      // console.log({ email, count });
 
       const result = await assetCollection
         .find(query)
@@ -272,11 +287,11 @@ async function run() {
 
     // request related APIs here
     // getting top requested 5 assets for a hr
-    app.get("/requests/:email/topAssets", async (req, res) => {
+    app.get("/requests/:email/topAssets", verifyJWTToken, async (req, res) => {
       const email = req.params.email;
-        if (email !== req.token_email) {
-          return res.status(403).send({ message: "Forbidden Access" });
-        }
+      if (email !== req.token_email) {
+        return res.status(403).send({ message: "Forbidden Access" });
+      }
       const topAssets = await requestCollection
         .aggregate([
           { $match: { hrEmail: email } },
@@ -289,7 +304,7 @@ async function run() {
       res.send(topAssets);
     });
     // posting a request to DB
-    app.post("/requests", verifyJWTToken, async (req, res) => {
+    app.post("/requests", verifyJWTToken, blockDemoUser, async (req, res) => {
       const request = req.body;
       if (request.requesterEmail !== req.token_email) {
         return res.status(403).send({ message: "Forbidden Access" });
@@ -303,18 +318,19 @@ async function run() {
     });
 
     // getting total asset count for a particular employee for a hr for myEmployees page
-    app.get("/requests", verifyJWTToken, verifyHR, async (req, res) => {
+    app.get("/requests", verifyJWTToken, async (req, res) => {
       //  console.log("received Query", req.query);
       const { requesterEmail, hrEmail, requestStatus } = req.query;
       const query = {};
 
       if (requesterEmail) {
+         if (requesterEmail!== req.token_email) {
+          return res.status(403).send({ message: "Forbidden Access" });
+        }
         query.requesterEmail = requesterEmail;
       }
       if (hrEmail) {
-        if (hrEmail !== req.token_email) {
-          return res.status(403).send({ message: "Forbidden Access" });
-        }
+       
         query.hrEmail = hrEmail;
       }
       if (requestStatus) {
@@ -342,18 +358,18 @@ async function run() {
       res.send({ result, totalCount: count });
     });
 
-    // getting top requested 5 assets
-    app.get("/requests/topAssets", async (req, res) => {
-      const topAssets = await requestCollection
-        .aggregate([
-          { $group: { _id: "$assetName", count: { $sum: 1 } } },
-          { $sort: { count: -1 } },
-          { $limit: 5 },
-          { $project: { assetName: "$_id", count: 1, _id: 0 } },
-        ])
-        .toArray();
-      res.send(topAssets);
-    });
+    // // getting top requested 5 assets
+    // app.get("/requests/topAssets", async (req, res) => {
+    //   const topAssets = await requestCollection
+    //     .aggregate([
+    //       { $group: { _id: "$assetName", count: { $sum: 1 } } },
+    //       { $sort: { count: -1 } },
+    //       { $limit: 5 },
+    //       { $project: { assetName: "$_id", count: 1, _id: 0 } },
+    //     ])
+    //     .toArray();
+    //   res.send(topAssets);
+    // });
 
     // update the status of request
     app.patch("/requests/:id", verifyJWTToken, verifyHR, async (req, res) => {
@@ -452,11 +468,8 @@ async function run() {
     });
 
     // getting all the employees associated with a company
-    app.get("/employees", verifyJWTToken, verifyHR, async (req, res) => {
-      const email = req.query.email;
-
-      const companyName = req.query.companyName;
-
+    app.get("/employees", verifyJWTToken, async (req, res) => {
+      const { email, companyName } = req.query;
       const query = {};
       if (email) {
         if (email !== req.token_email) {
@@ -506,6 +519,39 @@ async function run() {
         query.employeeEmail = employeeEmail;
       }
 
+   
+
+      // increase availableQuantity of returnable assets
+      const approvedAssets = await requestCollection
+        .find({
+          requesterEmail: employeeEmail,
+          hrEmail,
+          requestStatus: "approved",
+          assetType: "Returnable",
+        })
+        .toArray();
+
+      for (const asset of approvedAssets) {
+        const assetQuery = { _id: new ObjectId(asset.assetId) };
+        const updatedAvailableQuantity = {
+          $inc: {
+            availableQuantity: 1,
+          },
+        };
+        await assetCollection.updateOne(assetQuery, updatedAvailableQuantity);
+      }
+
+         // update request
+       await requestCollection.updateMany(
+      {
+        requesterEmail: employeeEmail,
+        hrEmail,
+        requestStatus: "approved",
+      },
+      { $set: { requestStatus: "returned" } }
+    );
+
+      // decrease currentEmployees by 1
       const hrQuery = await usersCollection.findOne({ email: hrEmail });
       const currentEmployeeUpdate = {
         $inc: {
